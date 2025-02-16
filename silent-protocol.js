@@ -11,17 +11,17 @@ const ENDPOINTS = {
 };
 
 const FILES = {
-    TOKENS: 'tokens.json',
+    WALLETS: 'tokens.json',
     CONFIG: 'config.json',
     PROXIES: 'proxies.txt'
 };
 
 const UPDATE_INTERVALS = {
     POSITION: 10000,  // 10 seconds
-    NOTIFICATION: 60000  // 1 minutes
+    NOTIFICATION: 60000  // 10 minutes
 };
 
-// Console styling
+// Console styling with emojis
 const ConsoleStyle = {
     reset: '\x1b[0m',
     bright: '\x1b[1m',
@@ -34,7 +34,7 @@ const ConsoleStyle = {
         status: '\x1b[35m'    // Magenta
     },
     icons: {
-        info: 'ℹ️',
+        info: '📝',
         success: '✅',
         warning: '⚠️',
         error: '❌',
@@ -102,8 +102,9 @@ class ProxyManager {
 }
 
 class WalletMonitor {
-    constructor(token, proxyManager) {
-        this.token = token;
+    constructor(walletData, proxyManager) {
+        this.token = walletData.token;
+        this.name = walletData.name;
         this.proxyManager = proxyManager;
         this.data = {
             position: null,
@@ -151,12 +152,12 @@ class WalletMonitor {
             this.data.lastUpdate = new Date();
             
             console.log(formatLog(
-                `[${this.token.slice(0, 6)}...] Position: ${data.behind} behind, ETA: ${data.timeRemaining}`,
+                `[${this.name}] Position: ${data.behind} behind, ETA: ${data.timeRemaining}`,
                 'status'
             ));
         } catch (error) {
             console.error(formatLog(
-                `[${this.token.slice(0, 6)}...] Position update failed: ${error.message}`,
+                `[${this.name}] Position update failed: ${error.message}`,
                 'error'
             ));
         }
@@ -166,9 +167,9 @@ class WalletMonitor {
         try {
             await this.makeRequest(ENDPOINTS.PING);
             this.data.lastPing = new Date();
-            console.log(formatLog(`[${this.token.slice(0, 6)}...] Ping successful`, 'success'));
+            console.log(formatLog(`[${this.name}] Ping successful`, 'success'));
         } catch (error) {
-            console.error(formatLog(`[${this.token.slice(0, 6)}...] Ping failed: ${error.message}`, 'error'));
+            console.error(formatLog(`[${this.name}] Ping failed: ${error.message}`, 'error'));
         }
     }
 
@@ -177,7 +178,7 @@ class WalletMonitor {
         if (!position) return null;
 
         return {
-            token: this.token.slice(0, 6),
+            name: this.name,
             position: position.behind,
             timeRemaining: position.timeRemaining,
             lastPing: lastPing?.toLocaleTimeString() || 'Never',
@@ -203,8 +204,9 @@ class CeremonyMonitor {
         await this.loadWallets();
         
         this.setupPeriodicTasks();
-        await this.sendTelegramNotification('🚀 <b>Monitor Started</b>\n\nMonitoring began for ' +
-            `${this.wallets.size} wallets.\nUpdates every 1 minutes.`);
+        await this.sendTelegramNotification('🚀 <b>Monitor Started</b>\n\n' +
+            `Monitoring began for ${this.wallets.size} wallets.\n` +
+            'Updates every 1 minutes.');
     }
 
     async initializeTelegram() {
@@ -228,11 +230,18 @@ class CeremonyMonitor {
 
     async loadWallets() {
         try {
-            const data = await fs.readFile(FILES.TOKENS, 'utf8');
-            const tokens = JSON.parse(data);
+            const data = await fs.readFile(FILES.WALLETS, 'utf8');
+            const wallets = JSON.parse(data);
             
-            tokens.forEach(token => {
-                this.wallets.set(token, new WalletMonitor(token, this.proxyManager));
+            if (!Array.isArray(wallets)) {
+                throw new Error('Wallets data must be an array');
+            }
+            
+            wallets.forEach(walletData => {
+                if (!walletData.name || !walletData.token) {
+                    throw new Error('Each wallet must have a name and token');
+                }
+                this.wallets.set(walletData.name, new WalletMonitor(walletData, this.proxyManager));
             });
             
             console.log(formatLog(`Loaded ${this.wallets.size} wallets`, 'success'));
@@ -256,15 +265,19 @@ class CeremonyMonitor {
     async sendStatusUpdate() {
         const reports = Array.from(this.wallets.values())
             .map(wallet => wallet.getStatusReport())
-            .filter(report => report !== null);
+            .filter(report => report !== null)
+            .sort((a, b) => a.position - b.position);
 
         if (reports.length === 0) return;
 
-        let message = '🔄 <b>Status Update</b>\n\n';
+        let message = '🔄 <b>Silent Protocol Status Update</b>\n\n';
         
-        reports.forEach(report => {
-            message += `<b>Wallet ${report.token}...</b>\n`;
-            message += `├ Position: ${report.position} behind\n`;
+        reports.forEach((report, index) => {
+            const position = index + 1;
+            const emoji = position <= 3 ? ['🥇', '🥈', '🥉'][index] : '🎯';
+            
+            message += `${emoji} <b>${report.name}</b>\n`;
+            message += `├ Queue: ${report.position} behind\n`;
             message += `├ ETA: ${report.timeRemaining}\n`;
             message += `├ Last Ping: ${report.lastPing}\n`;
             message += `├ Last Update: ${report.lastUpdate}\n`;
